@@ -1,0 +1,70 @@
+name: Publish master artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  publish-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets --all-features
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package release artifact
+        run: |
+          mkdir -p dist
+          cp target/release/alacritty-config-ui dist/alacritty-config-ui
+          chmod +x dist/alacritty-config-ui
+          tar -czf dist/alacritty-config-ui-macos.tar.gz -C dist alacritty-config-ui
+          shasum -a 256 dist/alacritty-config-ui-macos.tar.gz > dist/alacritty-config-ui-macos.tar.gz.sha256
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alacritty-config-ui-macos-${{ github.sha }}
+          path: |
+            dist/alacritty-config-ui-macos.tar.gz
+            dist/alacritty-config-ui-macos.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Publish rolling prerelease for master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view master-latest >/dev/null 2>&1; then
+            gh release delete master-latest --yes --cleanup-tag
+          fi
+
+          gh release create master-latest \
+            dist/alacritty-config-ui-macos.tar.gz \
+            dist/alacritty-config-ui-macos.tar.gz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "master-latest" \
+            --notes "Automated master build for commit $GITHUB_SHA." \
+            --prerelease
