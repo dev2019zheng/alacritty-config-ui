@@ -1,6 +1,8 @@
 [package]
 name = "alacritty-config-ui"
 version = "0.1.0"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/dev2019zheng/alacritty-config-ui"
 edition = "2024"
 
 [dependencies]

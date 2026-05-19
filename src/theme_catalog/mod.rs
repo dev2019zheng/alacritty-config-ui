@@ -53,9 +53,9 @@ pub struct ThemeCatalog {
 impl ThemeCatalog {
     pub fn load(config_root: &Path) -> Result<Self> {
         let mut entries = Vec::new();
-        let bundled_dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/alacritty-theme/themes");
-        collect_theme_entries(&bundled_dir, ThemeSource::BundledPreset, &mut entries)?;
+        if let Some(bundled_dir) = bundled_theme_dir() {
+            collect_theme_entries(&bundled_dir, ThemeSource::BundledPreset, &mut entries)?;
+        }
         collect_theme_entries(
             &config_root.join("themes/themes"),
             ThemeSource::LocalPreset,
@@ -93,6 +93,43 @@ impl ThemeCatalog {
         }
         candidate
     }
+}
+
+fn bundled_theme_dir() -> Option<PathBuf> {
+    first_existing_dir(bundled_theme_dir_candidates())
+}
+
+fn bundled_theme_dir_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        candidates.push(exe_dir.join("themes"));
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("vendor/alacritty-theme/themes"));
+    }
+
+    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/alacritty-theme/themes"));
+    candidates
+}
+
+fn first_existing_dir(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    let mut seen = Vec::new();
+
+    for path in paths {
+        if seen.iter().any(|existing| existing == &path) {
+            continue;
+        }
+        if path.is_dir() {
+            return Some(path);
+        }
+        seen.push(path);
+    }
+
+    None
 }
 
 fn collect_theme_entries(
@@ -148,4 +185,38 @@ fn slugify(value: &str) -> String {
     }
 
     slug.trim_matches('-').to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::first_existing_dir;
+
+    #[test]
+    fn first_existing_dir_prefers_earliest_existing_candidate() {
+        let temp_dir = TempDir::new().unwrap();
+        let first = temp_dir.path().join("first");
+        let second = temp_dir.path().join("second");
+        fs::create_dir_all(&second).unwrap();
+        fs::create_dir_all(&first).unwrap();
+
+        let resolved = first_existing_dir(vec![second.clone(), first.clone()]).unwrap();
+
+        assert_eq!(resolved, second);
+    }
+
+    #[test]
+    fn first_existing_dir_skips_missing_candidates() {
+        let temp_dir = TempDir::new().unwrap();
+        let missing = temp_dir.path().join("missing");
+        let existing = temp_dir.path().join("existing");
+        fs::create_dir_all(&existing).unwrap();
+
+        let resolved = first_existing_dir(vec![missing, existing.clone()]).unwrap();
+
+        assert_eq!(resolved, existing);
+    }
 }

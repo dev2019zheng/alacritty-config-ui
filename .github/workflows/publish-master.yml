@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -37,10 +39,15 @@ jobs:
         run: cargo build --release
 
       - name: Package release artifact
+        env:
+          COPYFILE_DISABLE: 1
         run: |
-          mkdir -p dist
-          cp target/release/alacritty-config-ui dist/alacritty-config-ui
-          chmod +x dist/alacritty-config-ui
+          mkdir -p dist/alacritty-config-ui
+          cp target/release/alacritty-config-ui dist/alacritty-config-ui/alacritty-config-ui
+          cp -R vendor/alacritty-theme/themes dist/alacritty-config-ui/themes
+          cp LICENSE-APACHE dist/alacritty-config-ui/LICENSE-APACHE
+          cp LICENSE-MIT dist/alacritty-config-ui/LICENSE-MIT
+          chmod +x dist/alacritty-config-ui/alacritty-config-ui
           tar -czf dist/alacritty-config-ui-macos.tar.gz -C dist alacritty-config-ui
           shasum -a 256 dist/alacritty-config-ui-macos.tar.gz > dist/alacritty-config-ui-macos.tar.gz.sha256
 

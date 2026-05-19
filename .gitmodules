@@ -1,0 +1,4 @@
+[submodule "vendor/alacritty-theme"]
+	path = vendor/alacritty-theme
+	url = https://github.com/alacritty/alacritty-theme
+	branch = master
