@@ -66,43 +66,59 @@ Pushes to `master` trigger two GitHub Actions workflows:
    - clippy
    - tests
    - release build
+   - macOS packaging verification (`.app` bundle + DMG assembly)
 2. `Publish master artifacts`
    - builds the macOS release binary
-   - packages bundled preset themes and license files
-   - uploads a workflow artifact
+   - generates the app icon asset
+   - packages bundled preset themes and license files into both a raw tarball and a macOS `.app`
+   - publishes either a signed notarized DMG or an explicitly unsigned DMG, depending on configured Apple secrets
+   - uploads workflow artifacts from `dist/upload/`
    - updates the rolling prerelease tag `master-latest`
 
-The current release package is a tarball containing:
+The release pipeline always produces a self-contained tarball containing:
 
 - `alacritty-config-ui`
 - `themes/`
 - `LICENSE-APACHE`
 - `LICENSE-MIT`
 
-## Why the release is `tar.gz`, not a `.dmg`
+It also builds a real macOS `.app` bundle and then wraps that bundle in a DMG.
 
-That is an intentional scope boundary in the current repository state.
+## Local macOS packaging
 
-Today the project publishes a standalone release binary plus runtime assets. The workflow does **not** build a macOS `.app` bundle, and it does **not** run any of the steps normally expected for a polished DMG installer flow:
+Reproduce the release artifacts locally with:
 
-- no `Info.plist` / bundle metadata
-- no app icon packaging
-- no `codesign`
-- no notarization via `notarytool`
-- no DMG assembly step such as `hdiutil`, `create-dmg`, or `appdmg`
+```bash
+cargo build --release
+python3 scripts/generate_app_icon.py
+bash scripts/package-macos-release.sh
+```
 
-A DMG without signing and notarization would still give users Gatekeeper friction, while also implying an installer-grade experience that the repo does not yet implement. Shipping a tarball is the honest current shape: a raw native binary plus the assets it needs at runtime.
+The packaging script writes artifacts to `dist/upload/`:
 
-If we want a real DMG path later, the missing work is clear:
+- `alacritty-config-ui-macos.tar.gz`
+- `alacritty-config-ui-macos.tar.gz.sha256`
+- `alacritty-config-ui-macos.dmg` + checksum when signing and notarization are configured
+- `alacritty-config-ui-macos-unsigned.dmg` + checksum otherwise
 
-1. produce a proper `.app` bundle
-2. add bundle metadata and icon assets
-3. sign the app with an Apple Developer identity
-4. notarize the artifact
-5. staple the notarization result
-6. build and publish a DMG from that signed app bundle
+The raw tarball keeps `themes/` next to the executable. The `.app` bundle stores runtime themes and licenses under `Contents/Resources/`.
 
-Until those pieces exist, calling the current output a DMG installer would be packaging theater.
+## DMG support boundaries
+
+The repository now contains a real `.app` bundle pipeline, icon generation, DMG assembly, optional signing, and optional notarization. The support boundary is still explicit:
+
+- A signed and notarized DMG only happens when the Apple certificate and notary secrets are configured.
+- Without those secrets, the workflow intentionally publishes an `-unsigned` DMG instead of pretending the result is installer-grade.
+- CI validates packaging structure on every `master` push, but it cannot verify Apple signing or notarization unless those credentials exist in GitHub Actions.
+
+For GitHub Actions signing and notarization, the workflow expects these secrets:
+
+- `APPLE_CERTIFICATE_P12_BASE64`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_SIGNING_IDENTITY`
+- `APPLE_NOTARY_APPLE_ID`
+- `APPLE_NOTARY_TEAM_ID`
+- `APPLE_NOTARY_APP_SPECIFIC_PASSWORD`
 
 ## License
 

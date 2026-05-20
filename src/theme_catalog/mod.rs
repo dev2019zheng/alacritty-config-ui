@@ -100,15 +100,27 @@ fn bundled_theme_dir() -> Option<PathBuf> {
 }
 
 fn bundled_theme_dir_candidates() -> Vec<PathBuf> {
+    let current_exe = std::env::current_exe().ok();
+    let current_dir = std::env::current_dir().ok();
+    bundled_theme_dir_candidates_for(current_exe.as_deref(), current_dir.as_deref())
+}
+
+fn bundled_theme_dir_candidates_for(
+    exe_path: Option<&Path>,
+    current_dir: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Ok(exe_path) = std::env::current_exe()
+    if let Some(exe_path) = exe_path
         && let Some(exe_dir) = exe_path.parent()
     {
         candidates.push(exe_dir.join("themes"));
+        if let Some(contents_dir) = exe_dir.parent() {
+            candidates.push(contents_dir.join("Resources/themes"));
+        }
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
+    if let Some(current_dir) = current_dir {
         candidates.push(current_dir.join("vendor/alacritty-theme/themes"));
     }
 
@@ -190,10 +202,11 @@ fn slugify(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use tempfile::TempDir;
 
-    use super::first_existing_dir;
+    use super::{bundled_theme_dir_candidates_for, first_existing_dir};
 
     #[test]
     fn first_existing_dir_prefers_earliest_existing_candidate() {
@@ -218,5 +231,31 @@ mod tests {
         let resolved = first_existing_dir(vec![missing, existing.clone()]).unwrap();
 
         assert_eq!(resolved, existing);
+    }
+
+    #[test]
+    fn bundled_theme_dir_candidates_include_app_resources() {
+        let exe_path =
+            Path::new("/Applications/Alacritty Config UI.app/Contents/MacOS/alacritty-config-ui");
+        let current_dir = Path::new("/tmp/alacritty-config-ui");
+
+        let candidates = bundled_theme_dir_candidates_for(Some(exe_path), Some(current_dir));
+
+        assert_eq!(
+            candidates[0],
+            Path::new("/Applications/Alacritty Config UI.app/Contents/MacOS/themes")
+        );
+        assert_eq!(
+            candidates[1],
+            Path::new("/Applications/Alacritty Config UI.app/Contents/Resources/themes")
+        );
+        assert_eq!(
+            candidates[2],
+            current_dir.join("vendor/alacritty-theme/themes")
+        );
+        assert_eq!(
+            candidates[3],
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/alacritty-theme/themes")
+        );
     }
 }

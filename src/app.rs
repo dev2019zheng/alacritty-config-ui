@@ -145,44 +145,49 @@ impl AlacrittyConfigApp {
     }
 
     fn apply_theme_entry(&mut self, entry: ThemeEntry) {
-        let Some(graph) = &mut self.graph else {
-            return;
+        let entry_name = entry.name.clone();
+        let is_preset = entry.source.is_preset();
+        let target_path = {
+            let Some(graph) = &mut self.graph else {
+                return;
+            };
+
+            let mut fragment = graph.current_theme_fragment();
+            if let Some(window) = entry.fragment.window {
+                fragment.window = Some(window);
+            }
+            if let Some(font) = entry.fragment.font {
+                fragment.font = Some(font);
+            }
+            if let Some(colors) = entry.fragment.colors {
+                fragment.colors = Some(colors);
+            }
+
+            let target_path = if is_preset {
+                self.catalog
+                    .suggested_custom_path(&graph.config_dir(), &entry_name)
+            } else {
+                entry.path.clone()
+            };
+
+            graph.activate_theme_fragment(target_path.clone(), fragment);
+            target_path
         };
 
-        let mut fragment = graph.current_theme_fragment();
-        if let Some(window) = entry.fragment.window {
-            fragment.window = Some(window);
-        }
-        if let Some(font) = entry.fragment.font {
-            fragment.font = Some(font);
-        }
-        if let Some(colors) = entry.fragment.colors {
-            fragment.colors = Some(colors);
-        }
-
-        let target_path = if entry.source.is_preset() {
-            self.catalog
-                .suggested_custom_path(&graph.config_dir(), &entry.name)
-        } else {
-            entry.path.clone()
-        };
-
-        graph.activate_theme_fragment(target_path.clone(), fragment);
         self.selected_panel = EditorPanel::Colors;
         self.error = None;
-        self.status = if entry.source.is_preset() {
-            format!(
-                "Preset '{}' staged into {}. Save to write the custom theme and activate it.",
-                entry.name,
-                target_path.display()
-            )
-        } else {
-            format!(
-                "Activated '{}' from {}. Save to persist the import.",
-                entry.name,
-                target_path.display()
-            )
-        };
+        self.save_graph();
+        if self.error.is_none() {
+            self.status = if is_preset {
+                format!(
+                    "Copied preset '{}' to {} and activated it.",
+                    entry_name,
+                    target_path.display()
+                )
+            } else {
+                format!("Activated '{}' from {}.", entry_name, target_path.display())
+            };
+        }
     }
 
     fn show_top_bar(&mut self, ctx: &egui::Context) {
@@ -735,4 +740,91 @@ fn edit_cell_color(ui: &mut egui::Ui, label: &str, value: &mut CellColor) -> boo
         }
     });
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use tempfile::TempDir;
+
+    use super::{AlacrittyConfigApp, EditorPanel};
+    use crate::config_graph::ConfigGraph;
+    use crate::theme_catalog::{ThemeCatalog, ThemeEntry, ThemeSource};
+
+    fn write_fixture(temp_dir: &TempDir) -> PathBuf {
+        let root = temp_dir.path().join("alacritty.toml");
+        let base = temp_dir.path().join("base.toml");
+        let themes_dir = temp_dir.path().join("themes");
+        let theme = themes_dir.join("night-calm.toml");
+
+        fs::create_dir_all(&themes_dir).unwrap();
+        fs::write(
+            &root,
+            r##"[general]
+import = ["base.toml", "themes/night-calm.toml"]
+live_config_reload = true
+"##,
+        )
+        .unwrap();
+        fs::write(
+            &base,
+            r##"[scrolling]
+history = 20000
+multiplier = 3
+"##,
+        )
+        .unwrap();
+        fs::write(
+            &theme,
+            r##"[colors.primary]
+background = "#0F111A"
+foreground = "#C5D1EB"
+"##,
+        )
+        .unwrap();
+
+        root
+    }
+
+    fn test_app(root: &PathBuf) -> AlacrittyConfigApp {
+        AlacrittyConfigApp {
+            graph: Some(ConfigGraph::load(root).unwrap()),
+            catalog: ThemeCatalog::default(),
+            fonts: Vec::new(),
+            selected_panel: EditorPanel::ThemeBrowser,
+            theme_search: String::new(),
+            detached_preview: false,
+            status: String::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn applying_preset_theme_persists_custom_copy_immediately() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = write_fixture(&temp_dir);
+        let mut app = test_app(&root);
+
+        let mut fragment = app.graph.as_ref().unwrap().current_theme_fragment();
+        fragment.colors.as_mut().unwrap().primary.background = "#101010".parse().unwrap();
+        let entry = ThemeEntry {
+            name: "Tokyo Night".to_owned(),
+            path: temp_dir
+                .path()
+                .join("vendor/alacritty-theme/themes/tokyo-night.toml"),
+            source: ThemeSource::BundledPreset,
+            fragment,
+        };
+
+        app.apply_theme_entry(entry);
+
+        let custom_theme = temp_dir.path().join("themes/custom/tokyo-night.toml");
+        let saved_root = fs::read_to_string(&root).unwrap();
+        assert!(saved_root.contains("themes/custom/tokyo-night.toml"));
+
+        let saved_theme = fs::read_to_string(&custom_theme).unwrap();
+        assert!(saved_theme.contains("background = \"#101010\""));
+    }
 }

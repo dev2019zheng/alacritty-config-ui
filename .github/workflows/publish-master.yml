@@ -13,6 +13,24 @@ jobs:
   publish-macos:
     runs-on: macos-latest
     steps:
+      - name: Import Apple signing certificate
+        if: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/apple-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p runner "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p runner "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k runner "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
@@ -38,40 +56,46 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Package release artifact
+      - name: Generate app icon
+        run: python3 scripts/generate_app_icon.py
+
+      - name: Package release artifacts
         env:
-          COPYFILE_DISABLE: 1
-        run: |
-          mkdir -p dist/alacritty-config-ui
-          cp target/release/alacritty-config-ui dist/alacritty-config-ui/alacritty-config-ui
-          cp -R vendor/alacritty-theme/themes dist/alacritty-config-ui/themes
-          cp LICENSE-APACHE dist/alacritty-config-ui/LICENSE-APACHE
-          cp LICENSE-MIT dist/alacritty-config-ui/LICENSE-MIT
-          chmod +x dist/alacritty-config-ui/alacritty-config-ui
-          tar -czf dist/alacritty-config-ui-macos.tar.gz -C dist alacritty-config-ui
-          shasum -a 256 dist/alacritty-config-ui-macos.tar.gz > dist/alacritty-config-ui-macos.tar.gz.sha256
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+        run: bash scripts/package-macos-release.sh
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: alacritty-config-ui-macos-${{ github.sha }}
-          path: |
-            dist/alacritty-config-ui-macos.tar.gz
-            dist/alacritty-config-ui-macos.tar.gz.sha256
+          path: dist/upload/*
           if-no-files-found: error
 
       - name: Publish rolling prerelease for master
         env:
           GH_TOKEN: ${{ github.token }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
         run: |
           if gh release view master-latest >/dev/null 2>&1; then
             gh release delete master-latest --yes --cleanup-tag
           fi
 
+          dmg_note='- unsigned DMG (Apple signing/notarization secrets not configured)'
+          if [[ -n "$APPLE_SIGNING_IDENTITY" && -n "$APPLE_NOTARY_APPLE_ID" && -n "$APPLE_NOTARY_TEAM_ID" && -n "$APPLE_NOTARY_APP_SPECIFIC_PASSWORD" ]]; then
+            dmg_note='- signed and notarized DMG'
+          fi
+
+          release_notes=$(printf 'Automated master build for commit %s.\n\nArtifacts:\n- self-contained tar.gz runtime payload\n%s' "$GITHUB_SHA" "$dmg_note")
+
           gh release create master-latest \
-            dist/alacritty-config-ui-macos.tar.gz \
-            dist/alacritty-config-ui-macos.tar.gz.sha256 \
+            dist/upload/* \
             --target "$GITHUB_SHA" \
             --title "master-latest" \
-            --notes "Automated master build for commit $GITHUB_SHA." \
+            --notes "$release_notes" \
             --prerelease
