@@ -8,16 +8,13 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: publish-version-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  publish-macos:
+  verify:
     runs-on: macos-latest
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -60,25 +57,107 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets --all-features
 
-      - name: Build release binary
-        run: cargo build --release
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            runner: macos-latest
+            python: python3
+            package_command: bash scripts/package-macos-release.sh
+          - name: windows
+            runner: windows-latest
+            python: python
+            package_command: pwsh -File scripts/package-windows-release.ps1
+          - name: linux
+            runner: ubuntu-22.04
+            python: python3
+            package_command: bash scripts/package-linux-release.sh
+    runs-on: ${{ matrix.runner }}
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --registry=https://registry.npmjs.org/
+
+      - name: Derive release metadata
+        shell: bash
+        run: ${{ matrix.python }} scripts/release_metadata.py --tag "$GITHUB_REF_NAME" --github-env "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux bundle dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
       - name: Generate app icon assets
-        run: python3 scripts/generate_app_icon.py
+        run: ${{ matrix.python }} scripts/generate_app_icon.py
 
-      - name: Package release artifacts
-        run: bash scripts/package-macos-release.sh
+      - name: Package platform artifacts
+        run: ${{ matrix.package_command }}
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: alacritty-config-ui-${{ env.RELEASE_TAG }}
+          name: release-assets-${{ matrix.name }}
           path: dist/upload/*
           if-no-files-found: error
 
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Derive release metadata
+        run: python3 scripts/release_metadata.py --tag "$GITHUB_REF_NAME" --github-env "$GITHUB_ENV"
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
       - name: Publish versioned GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           notes_file="$(mktemp)"
           dmg_note='- unsigned DMG (Apple certificate secrets not configured)'
@@ -96,13 +175,13 @@ jobs:
             release_kind='pre-release'
           fi
 
-          printf 'Automated %s for %s.\n\nArtifacts:\n- self-contained tar.gz runtime payload\n%s\n' \
+          printf 'Automated %s for %s.\n\nArtifacts:\n- macOS dmg + tar.gz\n- Windows setup.exe + installer.msi + portable.zip\n- Linux AppImage + deb + portable.tar.gz\n- SHA256 checksum files for every artifact\n%s\n' \
             "$release_kind" \
             "$RELEASE_TAG" \
             "$dmg_note" > "$notes_file"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/upload/* --clobber
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
             gh release edit "$RELEASE_TAG" \
               --title "$RELEASE_TITLE" \
               --notes-file "$notes_file" \
@@ -110,7 +189,7 @@ jobs:
               "${prerelease_flag[@]}"
           else
             gh release create "$RELEASE_TAG" \
-              dist/upload/* \
+              release-assets/* \
               --title "$RELEASE_TITLE" \
               --notes-file "$notes_file" \
               --verify-tag \

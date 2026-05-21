@@ -7,6 +7,7 @@ import struct
 import subprocess
 import zlib
 from pathlib import Path
+from shutil import which
 from tempfile import TemporaryDirectory
 
 SIZE = 1024
@@ -22,6 +23,7 @@ ICONSET_SPECS = [
     (512, "512x512"),
     (1024, "512x512@2x"),
 ]
+ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
 OUTER_TOP = (24, 33, 47, 255)
 OUTER_BOTTOM = (13, 18, 29, 255)
@@ -78,15 +80,28 @@ class Canvas:
         self.pixels[index + 2] = clamp_channel(out_b)
         self.pixels[index + 3] = clamp_channel(out_af * 255.0)
 
-    def save_png(self, path: Path) -> None:
+    def png_bytes(self) -> bytes:
         rows = []
         stride = self.width * 4
         for y in range(self.height):
             start = y * stride
             rows.append(b"\x00" + bytes(self.pixels[start : start + stride]))
         raw = b"".join(rows)
-        data = png_bytes(self.width, self.height, raw)
-        path.write_bytes(data)
+        return png_bytes(self.width, self.height, raw)
+
+    def save_png(self, path: Path) -> None:
+        path.write_bytes(self.png_bytes())
+
+    def resized(self, size: int) -> "Canvas":
+        resized = Canvas(size, size)
+        for y in range(size):
+            src_y = min(self.height - 1, int((y + 0.5) * self.height / size))
+            for x in range(size):
+                src_x = min(self.width - 1, int((x + 0.5) * self.width / size))
+                src_index = (src_y * self.width + src_x) * 4
+                dst_index = (y * size + x) * 4
+                resized.pixels[dst_index : dst_index + 4] = self.pixels[src_index : src_index + 4]
+        return resized
 
 
 def png_bytes(width: int, height: int, raw: bytes) -> bytes:
@@ -182,7 +197,7 @@ def draw_soft_shadow(canvas: Canvas, left: int, top: int, right: int, bottom: in
     )
 
 
-def draw_icon(output_path: Path) -> None:
+def draw_icon(output_path: Path) -> Canvas:
     canvas = Canvas(SIZE, SIZE)
 
     draw_soft_shadow(canvas, 142, 170, 882, 900, 170)
@@ -299,6 +314,33 @@ def draw_icon(output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save_png(output_path)
+    return canvas
+
+
+def render_ico(canvas: Canvas, ico_path: Path) -> None:
+    icon_blobs = [(size, canvas.resized(size).png_bytes()) for size in ICO_SIZES]
+    header = struct.pack("<HHH", 0, 1, len(icon_blobs))
+    directory = bytearray()
+    offset = 6 + len(icon_blobs) * 16
+
+    for size, blob in icon_blobs:
+        encoded_size = 0 if size >= 256 else size
+        directory.extend(
+            struct.pack(
+                "<BBBBHHII",
+                encoded_size,
+                encoded_size,
+                0,
+                0,
+                1,
+                32,
+                len(blob),
+                offset,
+            )
+        )
+        offset += len(blob)
+
+    ico_path.write_bytes(header + directory + b"".join(blob for _size, blob in icon_blobs))
 
 
 def render_icns(png_path: Path, icns_path: Path) -> None:
@@ -331,10 +373,15 @@ def render_icns(png_path: Path, icns_path: Path) -> None:
 if __name__ == "__main__":
     root = Path(__file__).resolve().parents[1]
     png_output = root / "assets" / "app-icon.png"
+    ico_output = root / "assets" / "app-icon.ico"
     icns_output = root / "assets" / "app-icon.icns"
 
-    draw_icon(png_output)
-    render_icns(png_output, icns_output)
+    canvas = draw_icon(png_output)
+    render_ico(canvas, ico_output)
 
     print(png_output)
-    print(icns_output)
+    print(ico_output)
+
+    if which("sips") and which("iconutil"):
+        render_icns(png_output, icns_output)
+        print(icns_output)

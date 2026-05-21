@@ -2,16 +2,75 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use toml_edit::DocumentMut;
 
 use super::{
     BaseDocumentConfig, ConfigGraph, RootDocumentConfig, ThemeDocumentConfig, merge_documents,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DefaultConfigPlatform {
+    Unix,
+    Windows,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DefaultConfigSelection {
+    Supported(PathBuf),
+    UnsupportedYaml(PathBuf),
+    NotFound,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SearchDirectories {
+    platform: DefaultConfigPlatform,
+    config_dir: Option<PathBuf>,
+    home_dir: Option<PathBuf>,
+    system_config_dir: Option<PathBuf>,
+}
+
+impl SearchDirectories {
+    fn current() -> Self {
+        let platform = if cfg!(windows) {
+            DefaultConfigPlatform::Windows
+        } else {
+            DefaultConfigPlatform::Unix
+        };
+
+        let home_dir = dirs::home_dir();
+        Self {
+            platform,
+            config_dir: current_config_dir(platform, home_dir.as_deref()),
+            home_dir,
+            system_config_dir: match platform {
+                DefaultConfigPlatform::Unix => Some(PathBuf::from("/etc/alacritty")),
+                DefaultConfigPlatform::Windows => None,
+            },
+        }
+    }
+}
+
 pub fn load_default() -> Result<ConfigGraph> {
-    let root = home_dir()?.join(".config/alacritty/alacritty.toml");
-    load(&root)
+    let search = SearchDirectories::current();
+    match resolve_default_config_selection(&search, |path| path.exists()) {
+        DefaultConfigSelection::Supported(path) => load(&path),
+        DefaultConfigSelection::UnsupportedYaml(path) => bail!(
+            "found default Alacritty config at {} but this editor only supports TOML; migrate it to alacritty.toml or open a TOML config manually",
+            path.display()
+        ),
+        DefaultConfigSelection::NotFound => {
+            let looked_in = installed_config_candidates(&search, "toml")
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if looked_in.is_empty() {
+                bail!("could not determine a default Alacritty config directory on this platform");
+            }
+            bail!("could not find a default Alacritty TOML config. Looked in: {looked_in}");
+        }
+    }
 }
 
 pub fn load(root_path: &Path) -> Result<ConfigGraph> {
@@ -61,10 +120,82 @@ pub fn load(root_path: &Path) -> Result<ConfigGraph> {
     })
 }
 
+fn current_config_dir(platform: DefaultConfigPlatform, home_dir: Option<&Path>) -> Option<PathBuf> {
+    match platform {
+        DefaultConfigPlatform::Unix => env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home_dir.map(|home| home.join(".config"))),
+        DefaultConfigPlatform::Windows => dirs::config_dir(),
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn installed_config_candidates(search: &SearchDirectories, suffix: &str) -> Vec<PathBuf> {
+    let file_name = format!("alacritty.{suffix}");
+    let mut candidates = Vec::new();
+
+    match search.platform {
+        DefaultConfigPlatform::Unix => {
+            if let Some(config_dir) = &search.config_dir {
+                push_unique_path(
+                    &mut candidates,
+                    config_dir.join("alacritty").join(&file_name),
+                );
+                push_unique_path(&mut candidates, config_dir.join(&file_name));
+            }
+            if let Some(home_dir) = &search.home_dir {
+                push_unique_path(
+                    &mut candidates,
+                    home_dir.join(".config/alacritty").join(&file_name),
+                );
+                push_unique_path(&mut candidates, home_dir.join(format!(".{file_name}")));
+            }
+            if let Some(system_config_dir) = &search.system_config_dir {
+                push_unique_path(&mut candidates, system_config_dir.join(&file_name));
+            }
+        }
+        DefaultConfigPlatform::Windows => {
+            if let Some(config_dir) = &search.config_dir {
+                push_unique_path(
+                    &mut candidates,
+                    config_dir.join("alacritty").join(file_name),
+                );
+            }
+        }
+    }
+
+    candidates
+}
+
+fn resolve_default_config_selection(
+    search: &SearchDirectories,
+    exists: impl Fn(&Path) -> bool,
+) -> DefaultConfigSelection {
+    for path in installed_config_candidates(search, "toml") {
+        if exists(&path) {
+            return DefaultConfigSelection::Supported(path);
+        }
+    }
+
+    for suffix in ["yml", "yaml"] {
+        for path in installed_config_candidates(search, suffix) {
+            if exists(&path) {
+                return DefaultConfigSelection::UnsupportedYaml(path);
+            }
+        }
+    }
+
+    DefaultConfigSelection::NotFound
+}
+
 pub fn home_dir() -> Result<PathBuf> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set; cannot resolve configuration directory")
+    dirs::home_dir()
+        .context("home directory is not available; cannot resolve configuration directory")
 }
 
 pub fn resolve_import_path(root_path: &Path, import: &str) -> Result<PathBuf> {
@@ -188,5 +319,93 @@ fn fallback_import_kind_from_path(path: &Path) -> ImportKind {
         ImportKind::Theme
     } else {
         ImportKind::Unknown
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, path::Path};
+
+    use super::{
+        DefaultConfigPlatform, DefaultConfigSelection, SearchDirectories,
+        installed_config_candidates, resolve_default_config_selection,
+    };
+
+    #[test]
+    fn installed_config_candidates_follow_xdg_order_on_unix() {
+        let search = SearchDirectories {
+            platform: DefaultConfigPlatform::Unix,
+            config_dir: Some(Path::new("/tmp/xdg").to_path_buf()),
+            home_dir: Some(Path::new("/tmp/home").to_path_buf()),
+            system_config_dir: Some(Path::new("/etc/alacritty").to_path_buf()),
+        };
+
+        assert_eq!(
+            installed_config_candidates(&search, "toml"),
+            vec![
+                Path::new("/tmp/xdg/alacritty/alacritty.toml").to_path_buf(),
+                Path::new("/tmp/xdg/alacritty.toml").to_path_buf(),
+                Path::new("/tmp/home/.config/alacritty/alacritty.toml").to_path_buf(),
+                Path::new("/tmp/home/.alacritty.toml").to_path_buf(),
+                Path::new("/etc/alacritty/alacritty.toml").to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn installed_config_candidates_use_appdata_on_windows() {
+        let search = SearchDirectories {
+            platform: DefaultConfigPlatform::Windows,
+            config_dir: Some(Path::new("C:/Users/alice/AppData/Roaming").to_path_buf()),
+            home_dir: Some(Path::new("C:/Users/alice").to_path_buf()),
+            system_config_dir: None,
+        };
+
+        assert_eq!(
+            installed_config_candidates(&search, "toml"),
+            vec![
+                Path::new("C:/Users/alice/AppData/Roaming/alacritty/alacritty.toml").to_path_buf()
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_default_config_selection_prefers_toml_before_yaml() {
+        let search = SearchDirectories {
+            platform: DefaultConfigPlatform::Unix,
+            config_dir: Some(Path::new("/tmp/xdg").to_path_buf()),
+            home_dir: Some(Path::new("/tmp/home").to_path_buf()),
+            system_config_dir: Some(Path::new("/etc/alacritty").to_path_buf()),
+        };
+        let existing = BTreeSet::from([
+            Path::new("/tmp/xdg/alacritty/alacritty.yaml").to_path_buf(),
+            Path::new("/tmp/home/.config/alacritty/alacritty.toml").to_path_buf(),
+        ]);
+
+        assert_eq!(
+            resolve_default_config_selection(&search, |path| existing.contains(path)),
+            DefaultConfigSelection::Supported(
+                Path::new("/tmp/home/.config/alacritty/alacritty.toml").to_path_buf()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_default_config_selection_reports_unsupported_yaml() {
+        let search = SearchDirectories {
+            platform: DefaultConfigPlatform::Unix,
+            config_dir: Some(Path::new("/tmp/xdg").to_path_buf()),
+            home_dir: Some(Path::new("/tmp/home").to_path_buf()),
+            system_config_dir: Some(Path::new("/etc/alacritty").to_path_buf()),
+        };
+        let existing =
+            BTreeSet::from([Path::new("/tmp/xdg/alacritty/alacritty.yml").to_path_buf()]);
+
+        assert_eq!(
+            resolve_default_config_selection(&search, |path| existing.contains(path)),
+            DefaultConfigSelection::UnsupportedYaml(
+                Path::new("/tmp/xdg/alacritty/alacritty.yml").to_path_buf()
+            )
+        );
     }
 }

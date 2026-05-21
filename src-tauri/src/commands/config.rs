@@ -131,7 +131,11 @@ pub fn apply_theme_entry(
     }
 
     let target_path = if source.is_preset() {
-        let catalog = ThemeCatalog::load(&graph.config_dir()).map_err(|err| err.to_string())?;
+        let catalog = ThemeCatalog::load(
+            &graph.config_dir(),
+            state.runtime_paths.resource_dir.as_deref(),
+        )
+        .map_err(|err| err.to_string())?;
         catalog.suggested_custom_path(&graph.config_dir(), &name)
     } else {
         PathBuf::from(path)

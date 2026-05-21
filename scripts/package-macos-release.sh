@@ -11,7 +11,8 @@ BUNDLE_DIR="$TARGET_DIR/bundle"
 APP_NAME="Alacritty Config UI"
 APP_BUNDLE="$BUNDLE_DIR/macos/$APP_NAME.app"
 ICON_ICNS="$ROOT/assets/app-icon.icns"
-ASSET_BASE_NAME="${RELEASE_ASSET_BASE_NAME:-alacritty-config-ui-macos}"
+ASSET_PREFIX="${RELEASE_ASSET_PREFIX:-alacritty-config-ui}"
+ASSET_BASE_NAME="$ASSET_PREFIX-macos"
 TAR_PATH="$UPLOADS/$ASSET_BASE_NAME.tar.gz"
 
 APPLE_CERTIFICATE_VALUE="${APPLE_CERTIFICATE:-${APPLE_CERTIFICATE_P12_BASE64:-}}"
@@ -85,7 +86,7 @@ export_if_set APPLE_API_KEY "$APPLE_API_KEY_VALUE"
 export_if_set APPLE_API_ISSUER "$APPLE_API_ISSUER_VALUE"
 export_if_set APPLE_API_KEY_PATH "$APPLE_API_KEY_PATH_VALUE"
 
-npm run --prefix "$ROOT" tauri build
+npm run --prefix "$ROOT" tauri build -- --bundles app,dmg
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "missing app bundle at $APP_BUNDLE" >&2

@@ -5,10 +5,16 @@ pub mod dto;
 pub mod state;
 pub mod theme_catalog;
 
+use tauri::Manager;
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(state::AppState::default())
+        .setup(|app| {
+            let resource_dir = app.path().resource_dir().ok();
+            let _ = app.manage(state::AppState::new(state::RuntimePaths { resource_dir }));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::catalog::list_themes,
             commands::config::apply_theme_entry,

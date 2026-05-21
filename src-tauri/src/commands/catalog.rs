@@ -11,6 +11,10 @@ pub fn list_themes(state: State<'_, AppState>) -> Result<Vec<ThemeEntryDto>, Str
     let graph = guard
         .as_ref()
         .ok_or_else(|| "configuration has not been loaded yet".to_owned())?;
-    let catalog = ThemeCatalog::load(&graph.config_dir()).map_err(|err| err.to_string())?;
+    let catalog = ThemeCatalog::load(
+        &graph.config_dir(),
+        state.runtime_paths.resource_dir.as_deref(),
+    )
+    .map_err(|err| err.to_string())?;
     Ok(catalog.entries.iter().map(ThemeEntryDto::from).collect())
 }

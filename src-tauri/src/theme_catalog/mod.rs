@@ -51,9 +51,9 @@ pub struct ThemeCatalog {
 }
 
 impl ThemeCatalog {
-    pub fn load(config_root: &Path) -> Result<Self> {
+    pub fn load(config_root: &Path, resource_dir: Option<&Path>) -> Result<Self> {
         let mut entries = Vec::new();
-        if let Some(bundled_dir) = bundled_theme_dir() {
+        if let Some(bundled_dir) = bundled_theme_dir(resource_dir) {
             collect_theme_entries(&bundled_dir, ThemeSource::BundledPreset, &mut entries)?;
         }
         collect_theme_entries(
@@ -95,27 +95,34 @@ impl ThemeCatalog {
     }
 }
 
-fn bundled_theme_dir() -> Option<PathBuf> {
-    first_existing_dir(bundled_theme_dir_candidates())
+fn bundled_theme_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    first_existing_dir(bundled_theme_dir_candidates(resource_dir))
 }
 
-fn bundled_theme_dir_candidates() -> Vec<PathBuf> {
+fn bundled_theme_dir_candidates(resource_dir: Option<&Path>) -> Vec<PathBuf> {
     let current_exe = std::env::current_exe().ok();
     let current_dir = std::env::current_dir().ok();
-    bundled_theme_dir_candidates_for(current_exe.as_deref(), current_dir.as_deref())
+    bundled_theme_dir_candidates_for(resource_dir, current_exe.as_deref(), current_dir.as_deref())
 }
 
 fn bundled_theme_dir_candidates_for(
+    resource_dir: Option<&Path>,
     exe_path: Option<&Path>,
     current_dir: Option<&Path>,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
+    if let Some(resource_dir) = resource_dir {
+        candidates.push(resource_dir.join("themes"));
+    }
+
     if let Some(exe_path) = exe_path
         && let Some(exe_dir) = exe_path.parent()
     {
         candidates.push(exe_dir.join("themes"));
-        if let Some(contents_dir) = exe_dir.parent() {
+        if let Some(contents_dir) = exe_dir.parent()
+            && contents_dir.file_name().and_then(|name| name.to_str()) == Some("Contents")
+        {
             candidates.push(contents_dir.join("Resources/themes"));
         }
     }
@@ -236,31 +243,48 @@ mod tests {
     }
 
     #[test]
-    fn bundled_theme_dir_candidates_include_app_resources() {
+    fn bundled_theme_dir_candidates_prefer_runtime_resource_dir() {
+        let resource_dir = Path::new("/Applications/Alacritty Config UI.app/Contents/Resources");
         let exe_path =
             Path::new("/Applications/Alacritty Config UI.app/Contents/MacOS/alacritty-config-ui");
         let current_dir = Path::new("/tmp/alacritty-config-ui");
 
-        let candidates = bundled_theme_dir_candidates_for(Some(exe_path), Some(current_dir));
+        let candidates =
+            bundled_theme_dir_candidates_for(Some(resource_dir), Some(exe_path), Some(current_dir));
 
         assert_eq!(
             candidates[0],
-            Path::new("/Applications/Alacritty Config UI.app/Contents/MacOS/themes")
-        );
-        assert_eq!(
-            candidates[1],
             Path::new("/Applications/Alacritty Config UI.app/Contents/Resources/themes")
         );
         assert_eq!(
+            candidates[1],
+            Path::new("/Applications/Alacritty Config UI.app/Contents/MacOS/themes")
+        );
+        assert_eq!(
             candidates[2],
-            current_dir.join("vendor/alacritty-theme/themes")
+            Path::new("/Applications/Alacritty Config UI.app/Contents/Resources/themes")
         );
         assert_eq!(
             candidates[3],
+            current_dir.join("vendor/alacritty-theme/themes")
+        );
+        assert_eq!(
+            candidates[4],
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .unwrap()
                 .join("vendor/alacritty-theme/themes")
         );
+    }
+
+    #[test]
+    fn bundled_theme_dir_candidates_skip_macos_resource_guess_for_plain_executable() {
+        let exe_path = Path::new("/usr/local/bin/alacritty-config-ui");
+        let current_dir = Path::new("/tmp/alacritty-config-ui");
+
+        let candidates = bundled_theme_dir_candidates_for(None, Some(exe_path), Some(current_dir));
+
+        assert_eq!(candidates[0], Path::new("/usr/local/bin/themes"));
+        assert!(!candidates.contains(&Path::new("/usr/local/Resources/themes").into()));
     }
 }
