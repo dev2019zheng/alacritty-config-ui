@@ -8,10 +8,12 @@ UPLOADS="$DIST/upload"
 RAW_DIR="$DIST/alacritty-config-ui"
 TARGET_DIR="$ROOT/target/release"
 BUNDLE_DIR="$TARGET_DIR/bundle"
+TAURI_CONFIG="$ROOT/src-tauri/tauri.conf.json"
 ASSET_PREFIX="${RELEASE_ASSET_PREFIX:-alacritty-config-ui}"
 APPIMAGE_PATH="$UPLOADS/$ASSET_PREFIX-linux.AppImage"
 DEB_PATH="$UPLOADS/$ASSET_PREFIX-linux.deb"
 TAR_PATH="$UPLOADS/$ASSET_PREFIX-linux.tar.gz"
+RESOURCE_DIR_NAME="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["productName"])' "$TAURI_CONFIG")"
 
 sha256_file() {
   shasum -a 256 "$1" > "$1.sha256"
@@ -53,7 +55,7 @@ verify_appimage_contents() {
     "$appimage" --appimage-extract >/dev/null
   )
 
-  local resource_root="$temp_dir/squashfs-root/usr/lib/alacritty-config-ui"
+  local resource_root="$temp_dir/squashfs-root/usr/lib/$RESOURCE_DIR_NAME"
   require_path "$resource_root/themes" "bundled themes in AppImage"
   require_path "$resource_root/LICENSE-APACHE" "LICENSE-APACHE in AppImage"
   require_path "$resource_root/LICENSE-MIT" "LICENSE-MIT in AppImage"
@@ -66,7 +68,7 @@ verify_deb_contents() {
   temp_dir="$(mktemp -d)"
   dpkg-deb -x "$deb" "$temp_dir"
 
-  local resource_root="$temp_dir/usr/lib/alacritty-config-ui"
+  local resource_root="$temp_dir/usr/lib/$RESOURCE_DIR_NAME"
   require_path "$resource_root/themes" "bundled themes in deb"
   require_path "$resource_root/LICENSE-APACHE" "LICENSE-APACHE in deb"
   require_path "$resource_root/LICENSE-MIT" "LICENSE-MIT in deb"
