@@ -4,13 +4,51 @@
   color-scheme: dark;
   --background: #0d1117;
   --foreground: #eef2f8;
-  --muted: #8d97a8;
-  --surface: #141922;
-  --surface-strong: #171d27;
-  --card: #10151d;
+  --muted: #8893a5;
+  --muted-strong: #aab5c9;
+  --surface: rgba(18, 23, 32, 0.88);
+  --surface-strong: rgba(20, 25, 35, 0.96);
+  --card: rgba(13, 18, 27, 0.92);
+  --field: rgba(255, 255, 255, 0.04);
+  --field-focus: rgba(20, 25, 35, 0.96);
   --border: rgba(255, 255, 255, 0.08);
-  --accent: #8ba7ff;
-  --accent-foreground: #07111f;
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --ghost-hover: rgba(255, 255, 255, 0.05);
+  --accent: #86a8ff;
+  --accent-foreground: #08111e;
+  --success-bg: rgba(74, 222, 128, 0.12);
+  --success-border: rgba(134, 239, 172, 0.24);
+  --success-fg: #dcfce7;
+  --shell-background:
+    radial-gradient(circle at top, rgba(134, 168, 255, 0.14), transparent 24%),
+    linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);
+  --font-sans: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+[data-chrome-theme="paper"] {
+  color-scheme: light;
+  --background: #f4efe6;
+  --foreground: #17212b;
+  --muted: #495563;
+  --muted-strong: #314153;
+  --surface: rgba(255, 255, 255, 0.84);
+  --surface-strong: rgba(255, 255, 255, 0.95);
+  --card: rgba(248, 244, 236, 0.95);
+  --field: rgba(255, 255, 255, 0.82);
+  --field-focus: rgba(255, 255, 255, 0.98);
+  --border: rgba(22, 32, 44, 0.2);
+  --border-strong: rgba(22, 32, 44, 0.32);
+  --ghost-hover: rgba(22, 32, 44, 0.08);
+  --accent: #1f46c7;
+  --accent-foreground: #ffffff;
+  --success-bg: rgba(34, 197, 94, 0.12);
+  --success-border: rgba(21, 128, 61, 0.18);
+  --success-fg: #14532d;
+  --shell-background:
+    radial-gradient(circle at top, rgba(41, 86, 232, 0.08), transparent 24%),
+    linear-gradient(180deg, #f7f2e9 0%, #ece5da 100%);
 }
 
 html,
@@ -19,13 +57,29 @@ body,
   margin: 0;
   min-height: 100%;
   height: 100%;
-  background: linear-gradient(180deg, #0d1117 0%, #0a0d12 100%);
+  background: #0d1117;
   color: var(--foreground);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
 }
 
 body {
   min-width: 1180px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+.app-shell {
+  min-height: 100%;
+  background: var(--shell-background);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
 }
 
 * {
@@ -37,4 +91,16 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+input,
+select,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button {
+  user-select: none;
+  -webkit-user-select: none;
 }

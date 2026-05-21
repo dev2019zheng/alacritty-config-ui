@@ -1,10 +1,11 @@
 /target
 /dist
 /dist-web
-/node_modules
+node_modules/
 /src-tauri/target
 /src-tauri/Cargo.lock
 /scripts/__pycache__/
 /.npmrc
 /ui-*.log
 /ui-*.png
+
