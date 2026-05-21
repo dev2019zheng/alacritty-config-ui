@@ -99,6 +99,46 @@ function Assert-InstallerListingContains {
   }
 }
 
+function Assert-DirectoryContainsRegex {
+  param(
+    [string]$Root,
+    [string]$Pattern,
+    [string]$Description
+  )
+
+  $entries = Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
+    ($_.FullName.Substring($Root.Length) -replace '\\', '/').TrimStart('/')
+  }
+
+  if (-not ($entries | Where-Object { $_ -match $Pattern })) {
+    throw "missing $Description under $Root"
+  }
+}
+
+function Assert-MsiContainsRegex {
+  param(
+    [string]$Archive,
+    [string]$Pattern,
+    [string]$Description
+  )
+
+  $extractRoot = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
+  $targetRoot = Join-Path $extractRoot 'payload'
+  New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
+
+  try {
+    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/a', $Archive, '/qn', "TARGETDIR=$targetRoot") -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+      throw "failed to extract MSI payload from $Archive"
+    }
+
+    Assert-DirectoryContainsRegex $targetRoot $Pattern $Description
+  }
+  finally {
+    Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 Remove-Item -LiteralPath $Dist -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $Uploads | Out-Null
 New-Item -ItemType Directory -Path $RawDir | Out-Null
@@ -134,9 +174,9 @@ Copy-Item -LiteralPath $MsiSource.FullName -Destination $MsiPath
 Assert-InstallerListingContains $SetupPath 'themes[\\/]' 'bundled themes in NSIS installer'
 Assert-InstallerListingContains $SetupPath 'LICENSE-APACHE' 'LICENSE-APACHE in NSIS installer'
 Assert-InstallerListingContains $SetupPath 'LICENSE-MIT' 'LICENSE-MIT in NSIS installer'
-Assert-InstallerListingContains $MsiPath 'themes[\\/]' 'bundled themes in MSI installer'
-Assert-InstallerListingContains $MsiPath 'LICENSE-APACHE' 'LICENSE-APACHE in MSI installer'
-Assert-InstallerListingContains $MsiPath 'LICENSE-MIT' 'LICENSE-MIT in MSI installer'
+Assert-MsiContainsRegex $MsiPath '(^|/)themes/' 'bundled themes in MSI installer'
+Assert-MsiContainsRegex $MsiPath '(^|/)LICENSE-APACHE$' 'LICENSE-APACHE in MSI installer'
+Assert-MsiContainsRegex $MsiPath '(^|/)LICENSE-MIT$' 'LICENSE-MIT in MSI installer'
 Write-Sha256 $SetupPath
 Write-Sha256 $MsiPath
 

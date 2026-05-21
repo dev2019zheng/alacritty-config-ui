@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,9 +11,25 @@ TAURI_CARGO_PATH = ROOT / "src-tauri" / "Cargo.toml"
 TAURI_CONFIG_PATH = ROOT / "src-tauri" / "tauri.conf.json"
 
 
+def load_cargo_package_version() -> str:
+    current_section: str | None = None
+    for raw_line in TAURI_CARGO_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1].strip()
+            continue
+        if current_section == "package" and line.startswith("version"):
+            _, value = line.split("=", 1)
+            return value.strip().strip('"')
+
+    raise SystemExit("unable to find package.version in src-tauri/Cargo.toml")
+
+
 def load_version() -> str:
     package_version = json.loads(PACKAGE_JSON_PATH.read_text(encoding="utf-8"))["version"]
-    cargo_version = tomllib.loads(TAURI_CARGO_PATH.read_text(encoding="utf-8"))["package"]["version"]
+    cargo_version = load_cargo_package_version()
     tauri_version = json.loads(TAURI_CONFIG_PATH.read_text(encoding="utf-8"))["version"]
 
     versions = {
