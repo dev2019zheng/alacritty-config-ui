@@ -4,10 +4,24 @@ from __future__ import annotations
 import binascii
 import math
 import struct
+import subprocess
 import zlib
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 SIZE = 1024
+ICONSET_SPECS = [
+    (16, "16x16"),
+    (32, "16x16@2x"),
+    (32, "32x32"),
+    (64, "32x32@2x"),
+    (128, "128x128"),
+    (256, "128x128@2x"),
+    (256, "256x256"),
+    (512, "256x256@2x"),
+    (512, "512x512"),
+    (1024, "512x512@2x"),
+]
 
 OUTER_TOP = (24, 33, 47, 255)
 OUTER_BOTTOM = (13, 18, 29, 255)
@@ -287,7 +301,40 @@ def draw_icon(output_path: Path) -> None:
     canvas.save_png(output_path)
 
 
+def render_icns(png_path: Path, icns_path: Path) -> None:
+    with TemporaryDirectory() as temp_dir:
+        iconset_dir = Path(temp_dir) / "app-icon.iconset"
+        iconset_dir.mkdir()
+
+        for size, suffix in ICONSET_SPECS:
+            subprocess.run(
+                [
+                    "sips",
+                    "-z",
+                    str(size),
+                    str(size),
+                    str(png_path),
+                    "--out",
+                    str(iconset_dir / f"icon_{suffix}.png"),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+
+        subprocess.run(
+            ["iconutil", "-c", "icns", str(iconset_dir), "-o", str(icns_path)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+
 if __name__ == "__main__":
-    output = Path(__file__).resolve().parents[1] / "assets" / "app-icon.png"
-    draw_icon(output)
-    print(output)
+    root = Path(__file__).resolve().parents[1]
+    png_output = root / "assets" / "app-icon.png"
+    icns_output = root / "assets" / "app-icon.icns"
+
+    draw_icon(png_output)
+    render_icns(png_output, icns_output)
+
+    print(png_output)
+    print(icns_output)

@@ -7,13 +7,23 @@ on:
       - master
 
 jobs:
-  rust:
+  macos:
     runs-on: macos-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --registry=https://registry.npmjs.org/
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -22,6 +32,12 @@ jobs:
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -35,7 +51,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Generate app icon
+      - name: Generate app icon assets
         run: python3 scripts/generate_app_icon.py
 
       - name: Verify macOS packaging
