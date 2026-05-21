@@ -1,10 +1,9 @@
-name: Publish master artifacts
+name: Publish version release
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - master
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: write
@@ -35,8 +34,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --registry=https://registry.npmjs.org/
 
-      - name: Check release version metadata
-        run: python3 scripts/release_metadata.py
+      - name: Derive release metadata
+        run: python3 scripts/release_metadata.py --tag "$GITHUB_REF_NAME" --github-env "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -73,18 +72,15 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: alacritty-config-ui-macos-${{ github.sha }}
+          name: alacritty-config-ui-${{ env.RELEASE_TAG }}
           path: dist/upload/*
           if-no-files-found: error
 
-      - name: Publish rolling prerelease for master
+      - name: Publish versioned GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view master-latest >/dev/null 2>&1; then
-            gh release delete master-latest --yes --cleanup-tag
-          fi
-
+          notes_file="$(mktemp)"
           dmg_note='- unsigned DMG (Apple certificate secrets not configured)'
           if [[ -n "$APPLE_CERTIFICATE" && -n "$APPLE_CERTIFICATE_PASSWORD" ]]; then
             dmg_note='- signed DMG without notarization (Apple notarization secrets not configured)'
@@ -93,11 +89,30 @@ jobs:
             fi
           fi
 
-          release_notes=$(printf 'Automated master build for commit %s.\n\nArtifacts:\n- self-contained tar.gz runtime payload\n%s' "$GITHUB_SHA" "$dmg_note")
+          prerelease_flag=()
+          release_kind='stable release'
+          if [[ "$RELEASE_IS_PRERELEASE" == 'true' ]]; then
+            prerelease_flag=(--prerelease)
+            release_kind='pre-release'
+          fi
 
-          gh release create master-latest \
-            dist/upload/* \
-            --target "$GITHUB_SHA" \
-            --title "master-latest" \
-            --notes "$release_notes" \
-            --prerelease
+          printf 'Automated %s for %s.\n\nArtifacts:\n- self-contained tar.gz runtime payload\n%s\n' \
+            "$release_kind" \
+            "$RELEASE_TAG" \
+            "$dmg_note" > "$notes_file"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/upload/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$notes_file" \
+              --verify-tag \
+              "${prerelease_flag[@]}"
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/upload/* \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$notes_file" \
+              --verify-tag \
+              "${prerelease_flag[@]}"
+          fi

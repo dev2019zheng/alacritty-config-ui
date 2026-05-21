@@ -11,7 +11,8 @@ BUNDLE_DIR="$TARGET_DIR/bundle"
 APP_NAME="Alacritty Config UI"
 APP_BUNDLE="$BUNDLE_DIR/macos/$APP_NAME.app"
 ICON_ICNS="$ROOT/assets/app-icon.icns"
-TAR_PATH="$UPLOADS/alacritty-config-ui-macos.tar.gz"
+ASSET_BASE_NAME="${RELEASE_ASSET_BASE_NAME:-alacritty-config-ui-macos}"
+TAR_PATH="$UPLOADS/$ASSET_BASE_NAME.tar.gz"
 
 APPLE_CERTIFICATE_VALUE="${APPLE_CERTIFICATE:-${APPLE_CERTIFICATE_P12_BASE64:-}}"
 APPLE_CERTIFICATE_PASSWORD_VALUE="${APPLE_CERTIFICATE_PASSWORD:-}"
@@ -112,11 +113,11 @@ if [[ -z "$DMG_SOURCE" ]]; then
 fi
 
 if signing_configured && notarization_configured; then
-  DMG_PATH="$UPLOADS/alacritty-config-ui-macos.dmg"
+  DMG_PATH="$UPLOADS/$ASSET_BASE_NAME.dmg"
 elif signing_configured; then
-  DMG_PATH="$UPLOADS/alacritty-config-ui-macos-signed-unnotarized.dmg"
+  DMG_PATH="$UPLOADS/$ASSET_BASE_NAME-signed-unnotarized.dmg"
 else
-  DMG_PATH="$UPLOADS/alacritty-config-ui-macos-unsigned.dmg"
+  DMG_PATH="$UPLOADS/$ASSET_BASE_NAME-unsigned.dmg"
 fi
 
 cp "$DMG_SOURCE" "$DMG_PATH"
